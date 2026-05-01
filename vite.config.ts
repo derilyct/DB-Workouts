@@ -17,7 +17,7 @@ function figmaAssetResolver() {
 }
 
 export default defineConfig({
-  base: process.env.GITHUB_PAGES === 'true' ? '/workout-tracker/' : '/',
+  base: process.env.GITHUB_PAGES === 'true' ? '/DB-Workouts/' : '/',
   plugins: [
     figmaAssetResolver(),
     // The React and Tailwind plugins are both required for Make, even if
