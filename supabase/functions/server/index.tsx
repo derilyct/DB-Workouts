@@ -58,7 +58,7 @@ app.post("/make-server-b20622c7/auth/create", async (c) => {
     const userKey = `user:${username.toLowerCase()}`;
     const existing = await kv.get(userKey);
     if (existing) {
-      return c.json({ error: "That login already exists." }, 409);
+      return c.json({ error: "An account with that username already exists." }, 409);
     }
     await kv.set(userKey, { username: username.toLowerCase(), password });
     return c.json({ status: "ok", username: username.toLowerCase() });
