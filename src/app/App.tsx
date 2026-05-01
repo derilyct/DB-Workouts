@@ -1038,20 +1038,6 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
                 )}
               </button>
             ))}
-            <button
-              onClick={handleAddTab}
-              className={`flex items-center justify-center w-6 h-6 lg:w-7 lg:h-7 cursor-pointer transition-colors shrink-0 ${
-                darkMode
-                  ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
-                  : "bg-white/80 text-black hover:bg-white"
-              }`}
-              title="Add new workout"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
           </div>
 
           {/* Edit titles, Dark mode toggle + Fullscreen - right */}
@@ -1178,20 +1164,6 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
                 )}
               </button>
             ))}
-            <button
-              onClick={handleAddTab}
-              className={`flex items-center justify-center w-6 h-6 cursor-pointer transition-colors shrink-0 ${
-                darkMode
-                  ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
-                  : "bg-white/80 text-black hover:bg-white"
-              }`}
-              title="Add new workout"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
           </div>
         </div>
 
@@ -1439,6 +1411,25 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
                 );
               })}
             </div>
+            <button
+              onClick={() => {
+                handleAddTab();
+                setDraftTabNames((prev) => [...prev, "New Workout"]);
+              }}
+              className={`flex items-center justify-center gap-2 w-full py-3 cursor-pointer transition-colors font-['Inter',sans-serif] text-[14px] sm:text-[16px] border-2 border-dashed ${
+                darkMode
+                  ? "border-[#3a3a4a] text-[#a0a0b0] hover:bg-[#2a2a3a] hover:text-white"
+                  : "border-[#ccc] text-[#888] hover:bg-[#f0f0f0] hover:text-black"
+              }`}
+              style={{ fontWeight: 600 }}
+              title="Add new workout"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Add New Workout
+            </button>
             <div className="flex gap-6 sm:gap-[34px] items-center justify-center">
               <button
                 onClick={() => {
