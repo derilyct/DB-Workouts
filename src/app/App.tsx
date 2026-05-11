@@ -207,6 +207,8 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
   const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null);
   const [dragFromIdx, setDragFromIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [showTabDropdown, setShowTabDropdown] = useState(false);
+  const tabDropdownRef = useRef<HTMLDivElement>(null);
   const [tabNames, setTabNames] = useState<Record<string, string>>(() => {
     try {
       const saved = localStorage.getItem(getUserKeys(loggedInUser).TAB_NAMES);
@@ -230,6 +232,18 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
+
+  // Close tab dropdown when clicking outside
+  useEffect(() => {
+    if (!showTabDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (tabDropdownRef.current && !tabDropdownRef.current.contains(e.target as Node)) {
+        setShowTabDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showTabDropdown]);
 
   // One-time wipe of stored workout values (post-clear migration v1).
   useEffect(() => {
@@ -1081,8 +1095,8 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
           {/* Logo - left */}
           <Logo darkMode={darkMode} />
 
-          {/* Tabs - centered (hidden on mobile, shown on tablet+) */}
-          <div className="hidden md:flex gap-3 lg:gap-[29px] items-center">
+          {/* Tabs - centered (hidden on tablet and below, shown on large screens) */}
+          <div className="hidden lg:flex gap-3 xl:gap-[29px] items-center">
             {displayTabs.map((tab, idx) => (
               <button
                 key={tab.id}
@@ -1105,6 +1119,53 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
                 )}
               </button>
             ))}
+          </div>
+
+          {/* Tab dropdown - shown on tablet and below */}
+          <div className="lg:hidden relative" ref={tabDropdownRef}>
+            <button
+              onClick={() => setShowTabDropdown((prev) => !prev)}
+              className={`flex items-center gap-2 px-3 py-1.5 sm:py-2 cursor-pointer transition-colors font-['Inter',sans-serif] text-[12px] sm:text-[13px] shrink-0 ${
+                darkMode
+                  ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
+                  : "bg-white/80 text-black hover:bg-white"
+              }`}
+              style={{ fontWeight: 600 }}
+            >
+              <span className="truncate max-w-[120px] sm:max-w-[180px]">{activeTab.name}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${showTabDropdown ? "rotate-180" : ""}`}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {showTabDropdown && (
+              <div className={`absolute top-full left-0 mt-1 min-w-[180px] max-h-[300px] overflow-y-auto z-50 shadow-lg border ${
+                darkMode
+                  ? "bg-[#1e1e2e] border-[#3a3a4a]"
+                  : "bg-white border-gray-200"
+              }`}>
+                {displayTabs.map((tab, idx) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => {
+                      handleTabChange(idx);
+                      setShowTabDropdown(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 font-['Inter',sans-serif] text-[12px] sm:text-[13px] cursor-pointer transition-colors ${
+                      idx === activeTabIdx
+                        ? darkMode
+                          ? "bg-[#006aff]/20 text-white font-semibold"
+                          : "bg-[#006aff]/10 text-black font-semibold"
+                        : darkMode
+                          ? "text-[#c0c0d0] hover:bg-[#2a2a3a]"
+                          : "text-black hover:bg-gray-100"
+                    }`}
+                    style={{ fontWeight: idx === activeTabIdx ? 600 : 400 }}
+                  >
+                    {tab.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Edit titles, Dark mode toggle + Fullscreen - right */}
@@ -1201,36 +1262,6 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
                 </svg>
               )}
             </button>
-          </div>
-        </div>
-
-        {/* Tabs - mobile horizontal scroll */}
-        <div className="md:hidden overflow-x-auto -mx-3 px-3">
-          <div className="flex gap-4 items-center min-w-max">
-            {displayTabs.map((tab, idx) => (
-              <button
-                key={tab.id}
-                onClick={() => handleTabChange(idx)}
-                className={`cursor-pointer shrink-0 ${
-                  idx === activeTabIdx ? "flex flex-col items-center" : ""
-                }`}
-              >
-                {idx === activeTabIdx ? (
-                  <div className="flex flex-col items-center w-full">
-                    <span className={`font-['Inter',sans-serif] text-[14px] ${darkMode ? "text-white" : "text-black"}`} style={{ fontWeight: 400 }}>
-                      {tab.name}
-                    </span>
-                    <div className="w-full px-2 py-1.5">
-                      <div className="bg-[#006aff] h-[2px] w-full" />
-                    </div>
-                  </div>
-                ) : (
-                  <span className={`font-['Inter',sans-serif] text-[10px] ${darkMode ? "text-[#a0a0b0]" : "text-black"}`} style={{ fontWeight: 400 }}>
-                    {tab.name}
-                  </span>
-                )}
-              </button>
-            ))}
           </div>
         </div>
 
