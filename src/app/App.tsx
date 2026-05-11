@@ -352,10 +352,12 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
   const previousValuesRef = useRef(previousValues);
   const workoutStartedRef = useRef(workoutStarted);
   const exerciseNamesRef = useRef(exerciseNames);
+  const dataLoadedRef = useRef(dataLoaded);
   newValuesRef.current = newValues;
   previousValuesRef.current = previousValues;
   workoutStartedRef.current = workoutStarted;
   exerciseNamesRef.current = exerciseNames;
+  dataLoadedRef.current = dataLoaded;
 
   // Save state to localStorage on beforeunload
   useEffect(() => {
@@ -384,7 +386,8 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify({}));
 
       // Also save to server (keepalive ensures request completes on page unload)
-      if (currentUser) {
+      // Only save if we've loaded from the server first, to avoid overwriting real data with empty defaults
+      if (currentUser && dataLoadedRef.current) {
         fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(currentUser)}`, {
           method: "PUT",
           headers: API_HEADERS,
