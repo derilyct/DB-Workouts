@@ -73,6 +73,8 @@ function userKeys(username: string) {
   const prefix = `data:${username}:`;
   return {
     previous: `${prefix}previous`,
+    newValues: `${prefix}new-values`,
+    workoutStarted: `${prefix}workout-started`,
     names: `${prefix}names`,
     tabNames: `${prefix}tab-names`,
     tabs: `${prefix}tabs-structure`,
@@ -87,14 +89,18 @@ app.get("/make-server-b20622c7/workout-data", async (c) => {
       return c.json({ error: "Missing user query param" }, 400);
     }
     const keys = userKeys(username);
-    const [previousValues, exerciseNames, tabNames, tabsStructure] = await Promise.all([
+    const [previousValues, newValues, workoutStarted, exerciseNames, tabNames, tabsStructure] = await Promise.all([
       kv.get(keys.previous),
+      kv.get(keys.newValues),
+      kv.get(keys.workoutStarted),
       kv.get(keys.names),
       kv.get(keys.tabNames),
       kv.get(keys.tabs),
     ]);
     return c.json({
       previousValues: previousValues ?? null,
+      newValues: newValues ?? null,
+      workoutStarted: workoutStarted ?? null,
       exerciseNames: exerciseNames ?? null,
       tabNames: tabNames ?? null,
       tabsStructure: tabsStructure ?? null,
@@ -117,6 +123,36 @@ app.put("/make-server-b20622c7/workout-data/previous", async (c) => {
   } catch (err) {
     console.log("Error saving previous values:", err);
     return c.json({ error: `Failed to save previous values: ${err}` }, 500);
+  }
+});
+
+// PUT save new values (in-progress workout data)
+app.put("/make-server-b20622c7/workout-data/new-values", async (c) => {
+  try {
+    const body = await c.req.json();
+    const username = c.req.query("user");
+    if (!username) return c.json({ error: "Missing user query param" }, 400);
+    const keys = userKeys(username);
+    await kv.set(keys.newValues, body.newValues);
+    return c.json({ status: "ok" });
+  } catch (err) {
+    console.log("Error saving new values:", err);
+    return c.json({ error: `Failed to save new values: ${err}` }, 500);
+  }
+});
+
+// PUT save workout started state
+app.put("/make-server-b20622c7/workout-data/workout-started", async (c) => {
+  try {
+    const body = await c.req.json();
+    const username = c.req.query("user");
+    if (!username) return c.json({ error: "Missing user query param" }, 400);
+    const keys = userKeys(username);
+    await kv.set(keys.workoutStarted, body.workoutStarted);
+    return c.json({ status: "ok" });
+  } catch (err) {
+    console.log("Error saving workout started:", err);
+    return c.json({ error: `Failed to save workout started: ${err}` }, 500);
   }
 });
 
@@ -178,6 +214,14 @@ app.put("/make-server-b20622c7/workout-data", async (c) => {
     if (body.previousValues !== undefined) {
       keys.push(uKeys.previous);
       values.push(body.previousValues);
+    }
+    if (body.newValues !== undefined) {
+      keys.push(uKeys.newValues);
+      values.push(body.newValues);
+    }
+    if (body.workoutStarted !== undefined) {
+      keys.push(uKeys.workoutStarted);
+      values.push(body.workoutStarted);
     }
     if (body.exerciseNames !== undefined) {
       keys.push(uKeys.names);

@@ -21,13 +21,23 @@ const STORAGE_KEY_USER = "workout-logged-in-user";
 // Helper to save to server (fire-and-forget, errors logged)
 let currentUser: string | null = null;
 function saveToServer(path: string, body: Record<string, any>) {
-  if (!currentUser) return;
+  if (!currentUser) {
+    console.warn(`[saveToServer] Skipped ${path}: no currentUser`);
+    return;
+  }
   const separator = path.includes("?") ? "&" : "?";
-  fetch(`${API_BASE}${path}${separator}user=${encodeURIComponent(currentUser)}`, {
+  const url = `${API_BASE}${path}${separator}user=${encodeURIComponent(currentUser)}`;
+  fetch(url, {
     method: "PUT",
     headers: API_HEADERS,
     body: JSON.stringify(body),
-  }).catch((err) => console.log(`Error saving to server ${path}:`, err));
+  })
+    .then((res) => {
+      if (!res.ok) {
+        res.text().then((t) => console.error(`[saveToServer] ${path} failed (${res.status}):`, t));
+      }
+    })
+    .catch((err) => console.error(`[saveToServer] Network error ${path}:`, err));
 }
 
 // Generate initial previous values — empty by default (no seed data on site updates)
@@ -234,7 +244,7 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     setPreviousValues(init);
     setNewValues({});
     setWorkoutStarted({});
-    saveToServer("/workout-data/previous", { previousValues: init });
+    // Don't wipe server data — the fetch effect will load whatever is on the server
     localStorage.setItem(FLAG, "1");
   }, [loggedInUser]);
 
@@ -245,6 +255,18 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(loggedInUser)}`, { headers: API_HEADERS })
       .then((res) => res.json())
       .then((data) => {
+        if (data.previousValues) {
+          setPreviousValues(data.previousValues);
+          localStorage.setItem(getUserKeys(loggedInUser).PREVIOUS, JSON.stringify(data.previousValues));
+        }
+        if (data.newValues) {
+          setNewValues(data.newValues);
+          localStorage.setItem(getUserKeys(loggedInUser).NEW, JSON.stringify(data.newValues));
+        }
+        if (data.workoutStarted) {
+          setWorkoutStarted(data.workoutStarted);
+          localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify(data.workoutStarted));
+        }
         if (data.exerciseNames) {
           setExerciseNames(data.exerciseNames);
           localStorage.setItem(getUserKeys(loggedInUser).NAMES, JSON.stringify(data.exerciseNames));
@@ -270,6 +292,38 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       saveToServer("/workout-data/tabs-structure", { tabsStructure: tabs });
     }
   }, [tabs, dataLoaded]);
+
+  // Debounced sync of newValues to server (saves 1s after last change, skips initial load)
+  const newValuesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const newValuesInitialSkip = useRef(true);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (newValuesInitialSkip.current) {
+      newValuesInitialSkip.current = false;
+      return;
+    }
+    if (newValuesSaveTimer.current) clearTimeout(newValuesSaveTimer.current);
+    newValuesSaveTimer.current = setTimeout(() => {
+      saveToServer("/workout-data", { newValues });
+    }, 1000);
+    return () => { if (newValuesSaveTimer.current) clearTimeout(newValuesSaveTimer.current); };
+  }, [newValues, dataLoaded]);
+
+  // Debounced sync of previousValues to server (saves 1s after last change, skips initial load)
+  const prevValuesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevValuesInitialSkip = useRef(true);
+  useEffect(() => {
+    if (!dataLoaded) return;
+    if (prevValuesInitialSkip.current) {
+      prevValuesInitialSkip.current = false;
+      return;
+    }
+    if (prevValuesSaveTimer.current) clearTimeout(prevValuesSaveTimer.current);
+    prevValuesSaveTimer.current = setTimeout(() => {
+      saveToServer("/workout-data/previous", { previousValues });
+    }, 1000);
+    return () => { if (prevValuesSaveTimer.current) clearTimeout(prevValuesSaveTimer.current); };
+  }, [previousValues, dataLoaded]);
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -322,6 +376,8 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
           headers: API_HEADERS,
           body: JSON.stringify({
             previousValues: mergedPrevious,
+            newValues: currentNew,
+            workoutStarted: workoutStartedRef.current,
             exerciseNames: exerciseNamesRef.current,
           }),
           keepalive: true,
@@ -445,9 +501,14 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     const tabId = activeTab.id;
     // If workout was already started, save current NEW values as PREVIOUS
     if (workoutStarted[tabId] && newValues[tabId]) {
-      setPreviousValues((prev) => ({ ...prev, [tabId]: { ...newValues[tabId] } }));
+      setPreviousValues((prev) => {
+        const updated = { ...prev, [tabId]: { ...newValues[tabId] } };
+        saveToServer("/workout-data/previous", { previousValues: updated });
+        return updated;
+      });
     }
-    setWorkoutStarted((prev) => ({ ...prev, [tabId]: true }));
+    const updatedStarted = { ...workoutStarted, [tabId]: true };
+    setWorkoutStarted(updatedStarted);
     // Initialize empty new values
     const init: Record<string, ExerciseValues> = {};
     for (const section of activeTab.sections) {
@@ -455,8 +516,11 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
         init[exercise.id] = { r1: "", w1: "", r2: "", w2: "" };
       }
     }
-    setNewValues((prev) => ({ ...prev, [tabId]: init }));
+    const updatedNew = { ...newValues, [tabId]: init };
+    setNewValues(updatedNew);
     setSelectedCell(null);
+    // Persist to server (use bulk endpoint)
+    saveToServer("/workout-data", { workoutStarted: updatedStarted, newValues: updatedNew });
   }, [activeTab, workoutStarted, newValues]);
 
   const handleEndWorkout = useCallback(() => {
@@ -474,17 +538,20 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       }
     }
     // Clear workout started state and new values for this tab
-    setWorkoutStarted((prev) => ({ ...prev, [tabId]: false }));
-    setNewValues((prev) => {
-      const updated = { ...prev };
-      delete updated[tabId];
-      return updated;
-    });
+    const updatedStarted = { ...workoutStarted, [tabId]: false };
+    setWorkoutStarted(updatedStarted);
+    const updatedNew = { ...newValues };
+    delete updatedNew[tabId];
+    setNewValues(updatedNew);
     setSelectedCell(null);
     // Persist to localStorage and server
-    localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify({ ...workoutStarted, [tabId]: false }));
+    localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify(updatedStarted));
     localStorage.setItem(getUserKeys(loggedInUser).PREVIOUS, JSON.stringify(updatedPrevious));
-    saveToServer("/workout-data/previous", { previousValues: updatedPrevious });
+    saveToServer("/workout-data", {
+      previousValues: updatedPrevious,
+      workoutStarted: updatedStarted,
+      newValues: updatedNew,
+    });
   }, [activeTab, newValues, workoutStarted, previousValues, loggedInUser]);
 
   const handleCancelWorkout = useCallback(() => {
@@ -494,16 +561,16 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
   const handleConfirmCancel = useCallback(() => {
     const tabId = activeTab.id;
     // Clear workout started state and new values without committing to previous
-    setWorkoutStarted((prev) => ({ ...prev, [tabId]: false }));
-    setNewValues((prev) => {
-      const updated = { ...prev };
-      delete updated[tabId];
-      return updated;
-    });
+    const updatedStarted = { ...workoutStarted, [tabId]: false };
+    setWorkoutStarted(updatedStarted);
+    const updatedNew = { ...newValues };
+    delete updatedNew[tabId];
+    setNewValues(updatedNew);
     setSelectedCell(null);
     setShowCancelConfirm(false);
-    localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify({ ...workoutStarted, [tabId]: false }));
-  }, [activeTab, workoutStarted, loggedInUser]);
+    localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify(updatedStarted));
+    saveToServer("/workout-data", { workoutStarted: updatedStarted, newValues: updatedNew });
+  }, [activeTab, workoutStarted, newValues, loggedInUser]);
 
   const handleDismissCancel = useCallback(() => {
     setShowCancelConfirm(false);
