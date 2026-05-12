@@ -41,6 +41,9 @@ export function LoginScreen({ darkMode }: LoginScreenProps) {
     const { error: err } = await supabase.auth.signUp({
       email: email.trim(),
       password,
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
     });
     if (err) setError(err.message);
     setLoading(false);
