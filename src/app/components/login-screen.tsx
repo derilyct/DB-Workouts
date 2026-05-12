@@ -1,71 +1,49 @@
 import { useState } from "react";
 import svgPaths from "../../imports/svg-d410xzhft7";
+import { supabase } from "../../lib/supabase";
 
 interface LoginScreenProps {
   darkMode: boolean;
-  onLogin: (username: string) => void;
-  apiBase: string;
-  apiHeaders: Record<string, string>;
 }
 
-export function LoginScreen({ darkMode, onLogin, apiBase, apiHeaders }: LoginScreenProps) {
-  const [username, setUsername] = useState("");
+export function LoginScreen({ darkMode }: LoginScreenProps) {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSignIn = async () => {
-    if (!username.trim() || !password.trim()) {
-      setError("Username and password are required.");
+    if (!email.trim() || !password.trim()) {
+      setError("Email and password are required.");
       return;
     }
     setLoading(true);
     setError("");
-    try {
-      const res = await fetch(`${apiBase}/auth/signin`, {
-        method: "POST",
-        headers: apiHeaders,
-        body: JSON.stringify({ username: username.trim(), password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Sign in failed.");
-      } else {
-        onLogin(data.username);
-      }
-    } catch (err) {
-      console.log("Sign in error:", err);
-      setError("Network error. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+    const { error: err } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (err) setError(err.message);
+    setLoading(false);
   };
 
   const handleCreate = async () => {
-    if (!username.trim() || !password.trim()) {
-      setError("Username and password are required.");
+    if (!email.trim() || !password.trim()) {
+      setError("Email and password are required.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
     setLoading(true);
     setError("");
-    try {
-      const res = await fetch(`${apiBase}/auth/create`, {
-        method: "POST",
-        headers: apiHeaders,
-        body: JSON.stringify({ username: username.trim(), password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Account creation failed.");
-      } else {
-        onLogin(data.username);
-      }
-    } catch (err) {
-      console.log("Create account error:", err);
-      setError("Network error. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+    const { error: err } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+    });
+    if (err) setError(err.message);
+    setLoading(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -151,10 +129,10 @@ export function LoginScreen({ darkMode, onLogin, apiBase, apiHeaders }: LoginScr
             <div className="flex flex-row items-center justify-center min-h-[inherit] min-w-[inherit] size-full">
               <div className="flex items-center justify-center min-h-[inherit] min-w-[inherit] p-[10px] relative">
                 <input
-                  type="text"
-                  placeholder="Username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   onKeyDown={handleKeyDown}
                   className={`font-['Inter',sans-serif] text-[12px] text-center bg-transparent outline-none w-full ${
                     darkMode

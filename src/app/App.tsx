@@ -8,77 +8,26 @@ import { LoginScreen } from "./components/login-screen";
 import Logo from "../imports/Logo";
 import bgImage from "figma:asset/ed52ae13ae2120a23f5536a3aa9c66f94a092885.png";
 import darkBgImage from "figma:asset/ffddf1ccef21438495da3e4084f67698ccbfd94e.png";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
-
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-b20622c7`;
-const API_HEADERS: Record<string, string> = {
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${publicAnonKey}`,
-};
-
-const STORAGE_KEY_USER = "workout-logged-in-user";
-
-// Helper to save to server (fire-and-forget, errors logged)
-let currentUser: string | null = null;
-function saveToServer(path: string, body: Record<string, any>) {
-  if (!currentUser) {
-    console.warn(`[saveToServer] Skipped ${path}: no currentUser`);
-    return;
-  }
-  const separator = path.includes("?") ? "&" : "?";
-  const url = `${API_BASE}${path}${separator}user=${encodeURIComponent(currentUser)}`;
-  fetch(url, {
-    method: "PUT",
-    headers: API_HEADERS,
-    body: JSON.stringify(body),
-  })
-    .then((res) => {
-      if (!res.ok) {
-        res.text().then((t) => console.error(`[saveToServer] ${path} failed (${res.status}):`, t));
-      }
-    })
-    .catch((err) => console.error(`[saveToServer] Network error ${path}:`, err));
-}
-
-// Generate initial previous values — empty by default (no seed data on site updates)
-function generateMockPrevious(tab: WorkoutTab): Record<string, ExerciseValues> {
-  const prev: Record<string, ExerciseValues> = {};
-  for (const section of tab.sections) {
-    for (const exercise of section.exercises) {
-      prev[exercise.id] = { r1: "", w1: "", r2: "", w2: "" };
-    }
-  }
-  return prev;
-}
+import { supabase } from "../lib/supabase";
+import {
+  loadAllData,
+  saveTabsRecord,
+  saveExerciseValues,
+  saveExerciseValuesBulk,
+  startWorkoutDb,
+  endWorkoutDb,
+  cancelWorkoutDb,
+  deleteExercisePrevious,
+  EMPTY_VALUES,
+  type ValuesMap,
+} from "../lib/workout-api";
+import type { Session } from "@supabase/supabase-js";
 
 const STORAGE_KEY_DARK_MODE = "workout-dark-mode";
 
-// Per-user localStorage key helpers
-function userStorageKey(username: string, suffix: string) {
-  return `workout-${username}-${suffix}`;
-}
-function getUserKeys(username: string) {
-  return {
-    PREVIOUS: userStorageKey(username, "previous-values"),
-    NEW: userStorageKey(username, "new-values"),
-    NAMES: userStorageKey(username, "exercise-names"),
-    STARTED: userStorageKey(username, "started"),
-    TAB_NAMES: userStorageKey(username, "tab-names"),
-  };
-}
-
 export default function App() {
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY_USER) || null;
-    } catch { return null; }
-  });
-
-  // Keep module-level currentUser in sync
-  useEffect(() => {
-    currentUser = loggedInUser;
-  }, [loggedInUser]);
-
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [darkMode, setDarkMode] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DARK_MODE);
@@ -86,20 +35,30 @@ export default function App() {
     } catch { return false; }
   });
 
-  const handleLogin = useCallback((username: string) => {
-    setLoggedInUser(username);
-    currentUser = username;
-    localStorage.setItem(STORAGE_KEY_USER, username);
+  // Subscribe to auth state
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  const handleLogout = useCallback(() => {
-    setLoggedInUser(null);
-    currentUser = null;
-    localStorage.removeItem(STORAGE_KEY_USER);
+  const handleLogout = useCallback(async () => {
+    await supabase.auth.signOut();
   }, []);
 
-  // Show login screen if not logged in
-  if (!loggedInUser) {
+  if (authLoading) {
+    return (
+      <div className={`relative h-full flex items-center justify-center ${darkMode ? "bg-[#121218]" : "bg-[#ededed]"}`} />
+    );
+  }
+
+  // Show login screen if not signed in
+  if (!session) {
     return (
       <div
         className={`relative h-full flex flex-col overflow-hidden ${darkMode ? "bg-[#121218]" : "bg-[#ededed]"}`}
@@ -108,12 +67,12 @@ export default function App() {
           : { backgroundImage: `url(${bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }
         }
       >
-        <LoginScreen darkMode={darkMode} onLogin={handleLogin} apiBase={API_BASE} apiHeaders={API_HEADERS} />
+        <LoginScreen darkMode={darkMode} />
       </div>
     );
   }
 
-  return <WorkoutApp key={loggedInUser} loggedInUser={loggedInUser} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={handleLogout} />;
+  return <WorkoutApp key={session.user.id} userId={session.user.id} loggedInUser={session.user.email ?? session.user.id} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={handleLogout} />;
 }
 
 function ColumnCountIcon({
@@ -158,46 +117,22 @@ function ColumnCountIcon({
 }
 
 interface WorkoutAppProps {
+  userId: string;
   loggedInUser: string;
   darkMode: boolean;
   setDarkMode: React.Dispatch<React.SetStateAction<boolean>>;
   onLogout: () => void;
 }
 
-function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAppProps) {
+function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAppProps) {
   const [tabs, setTabs] = useState<WorkoutTab[]>(defaultWorkoutTabs);
   const [activeTabIdx, setActiveTabIdx] = useState(0);
-  const [workoutStarted, setWorkoutStarted] = useState<Record<string, boolean>>(() => {
-    try {
-      const saved = localStorage.getItem(getUserKeys(loggedInUser).STARTED);
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  });
-  const [previousValues, setPreviousValues] = useState<Record<string, Record<string, ExerciseValues>>>(() => {
-    try {
-      const saved = localStorage.getItem(getUserKeys(loggedInUser).PREVIOUS);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    const init: Record<string, Record<string, ExerciseValues>> = {};
-    for (const tab of defaultWorkoutTabs) {
-      init[tab.id] = generateMockPrevious(tab);
-    }
-    return init;
-  });
-  const [newValues, setNewValues] = useState<Record<string, Record<string, ExerciseValues>>>(() => {
-    try {
-      const saved = localStorage.getItem(getUserKeys(loggedInUser).NEW);
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  });
+  const [workoutStarted, setWorkoutStarted] = useState<Record<string, boolean>>({});
+  const [previousValues, setPreviousValues] = useState<ValuesMap>({});
+  const [newValues, setNewValues] = useState<ValuesMap>({});
   const [selectedCell, setSelectedCell] = useState<CellId | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [exerciseNames, setExerciseNames] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem(getUserKeys(loggedInUser).NAMES);
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  });
+  const [exerciseNames, setExerciseNames] = useState<Record<string, string>>({});
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [editingPrevious, setEditingPrevious] = useState<Record<string, boolean>>({});
   const [selectedColumn, setSelectedColumn] = useState<"previous" | "new">("new");
@@ -209,12 +144,8 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [showTabDropdown, setShowTabDropdown] = useState(false);
   const tabDropdownRef = useRef<HTMLDivElement>(null);
-  const [tabNames, setTabNames] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem(getUserKeys(loggedInUser).TAB_NAMES);
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  });
+  const [tabNames, setTabNames] = useState<Record<string, string>>({});
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   // Apply persisted tab names to tabs
   const displayTabs = useMemo(() => {
@@ -245,69 +176,40 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showTabDropdown]);
 
-  // One-time wipe of stored workout values (post-clear migration v1).
+  // Load all data from Supabase on mount
   useEffect(() => {
-    const FLAG = "workout-cleared-v1";
-    if (localStorage.getItem(FLAG)) return;
-    const keys = getUserKeys(loggedInUser);
-    localStorage.removeItem(keys.PREVIOUS);
-    localStorage.removeItem(keys.NEW);
-    localStorage.removeItem(keys.STARTED);
-    const init: Record<string, Record<string, ExerciseValues>> = {};
-    for (const tab of defaultWorkoutTabs) init[tab.id] = generateMockPrevious(tab);
-    setPreviousValues(init);
-    setNewValues({});
-    setWorkoutStarted({});
-    // Don't wipe server data — the fetch effect will load whatever is on the server
-    localStorage.setItem(FLAG, "1");
-  }, [loggedInUser]);
+    let cancelled = false;
+    (async () => {
+      const data = await loadAllData(userId);
+      if (cancelled) return;
+      if (data.tabsData && data.tabsData.length > 0) {
+        setTabs(data.tabsData);
+      } else {
+        // First-time user: seed their tabs structure with defaults
+        await saveTabsRecord(userId, { tabsData: defaultWorkoutTabs });
+      }
+      setExerciseNames(data.exerciseNames);
+      setTabNames(data.tabNames);
+      setPreviousValues(data.previousValues);
+      setNewValues(data.currentValues);
+      setWorkoutStarted(data.workoutStarted);
+      setDataLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
 
-  // Fetch workout data from server on mount (server data overrides localStorage)
-  const [dataLoaded, setDataLoaded] = useState(false);
+  // Sync tabs structure to Supabase when it changes (after initial load)
+  const tabsInitialSkip = useRef(true);
   useEffect(() => {
-    if (!loggedInUser) return;
-    fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(loggedInUser)}`, { headers: API_HEADERS })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.previousValues) {
-          setPreviousValues(data.previousValues);
-          localStorage.setItem(getUserKeys(loggedInUser).PREVIOUS, JSON.stringify(data.previousValues));
-        }
-        if (data.newValues) {
-          setNewValues(data.newValues);
-          localStorage.setItem(getUserKeys(loggedInUser).NEW, JSON.stringify(data.newValues));
-        }
-        if (data.workoutStarted) {
-          setWorkoutStarted(data.workoutStarted);
-          localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify(data.workoutStarted));
-        }
-        if (data.exerciseNames) {
-          setExerciseNames(data.exerciseNames);
-          localStorage.setItem(getUserKeys(loggedInUser).NAMES, JSON.stringify(data.exerciseNames));
-        }
-        if (data.tabNames) {
-          setTabNames(data.tabNames);
-          localStorage.setItem(getUserKeys(loggedInUser).TAB_NAMES, JSON.stringify(data.tabNames));
-        }
-        if (data.tabsStructure) {
-          setTabs(data.tabsStructure);
-        }
-        setDataLoaded(true);
-      })
-      .catch((err) => {
-        console.log("Error fetching workout data from server, using localStorage:", err);
-        setDataLoaded(true);
-      });
-  }, [loggedInUser]);
-
-  // Sync tabs structure to server whenever it changes (after initial load)
-  useEffect(() => {
-    if (dataLoaded) {
-      saveToServer("/workout-data/tabs-structure", { tabsStructure: tabs });
+    if (!dataLoaded) return;
+    if (tabsInitialSkip.current) {
+      tabsInitialSkip.current = false;
+      return;
     }
-  }, [tabs, dataLoaded]);
+    saveTabsRecord(userId, { tabsData: tabs });
+  }, [tabs, dataLoaded, userId]);
 
-  // Debounced sync of newValues to server (saves 1s after last change, skips initial load)
+  // Debounced sync of newValues for the active tab
   const newValuesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const newValuesInitialSkip = useRef(true);
   useEffect(() => {
@@ -317,13 +219,17 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       return;
     }
     if (newValuesSaveTimer.current) clearTimeout(newValuesSaveTimer.current);
+    const snapshot = newValues;
     newValuesSaveTimer.current = setTimeout(() => {
-      saveToServer("/workout-data", { newValues });
-    }, 1000);
+      // Save each tab's current values
+      for (const [tabId, exercises] of Object.entries(snapshot)) {
+        saveExerciseValuesBulk(userId, tabId, true, exercises);
+      }
+    }, 600);
     return () => { if (newValuesSaveTimer.current) clearTimeout(newValuesSaveTimer.current); };
-  }, [newValues, dataLoaded]);
+  }, [newValues, dataLoaded, userId]);
 
-  // Debounced sync of previousValues to server (saves 1s after last change, skips initial load)
+  // Debounced sync of previousValues for the active tab (used during edit-previous mode)
   const prevValuesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevValuesInitialSkip = useRef(true);
   useEffect(() => {
@@ -333,11 +239,14 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       return;
     }
     if (prevValuesSaveTimer.current) clearTimeout(prevValuesSaveTimer.current);
+    const snapshot = previousValues;
     prevValuesSaveTimer.current = setTimeout(() => {
-      saveToServer("/workout-data/previous", { previousValues });
-    }, 1000);
+      for (const [tabId, exercises] of Object.entries(snapshot)) {
+        saveExerciseValuesBulk(userId, tabId, false, exercises);
+      }
+    }, 600);
     return () => { if (prevValuesSaveTimer.current) clearTimeout(prevValuesSaveTimer.current); };
-  }, [previousValues, dataLoaded]);
+  }, [previousValues, dataLoaded, userId]);
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -346,119 +255,6 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       document.exitFullscreen().catch(() => {});
     }
   }, []);
-
-  // Refs to track latest values for save handlers
-  const newValuesRef = useRef(newValues);
-  const previousValuesRef = useRef(previousValues);
-  const workoutStartedRef = useRef(workoutStarted);
-  const exerciseNamesRef = useRef(exerciseNames);
-  const dataLoadedRef = useRef(dataLoaded);
-  newValuesRef.current = newValues;
-  previousValuesRef.current = previousValues;
-  workoutStartedRef.current = workoutStarted;
-  exerciseNamesRef.current = exerciseNames;
-  dataLoadedRef.current = dataLoaded;
-
-  // Flush any pending debounced saves immediately
-  const flushDebouncedSaves = useCallback(() => {
-    if (!dataLoadedRef.current) return;
-    if (newValuesSaveTimer.current) {
-      clearTimeout(newValuesSaveTimer.current);
-      newValuesSaveTimer.current = null;
-      saveToServer("/workout-data", { newValues: newValuesRef.current });
-    }
-    if (prevValuesSaveTimer.current) {
-      clearTimeout(prevValuesSaveTimer.current);
-      prevValuesSaveTimer.current = null;
-      saveToServer("/workout-data/previous", { previousValues: previousValuesRef.current });
-    }
-  }, []);
-
-  // Save all current state to server (used on page hide, beforeunload, and unmount)
-  const saveAllToServer = useCallback((useKeepalive = false) => {
-    if (!currentUser || !dataLoadedRef.current) return;
-    const currentNew = newValuesRef.current;
-    const currentPrev = previousValuesRef.current;
-    fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(currentUser)}`, {
-      method: "PUT",
-      headers: API_HEADERS,
-      body: JSON.stringify({
-        previousValues: currentPrev,
-        newValues: currentNew,
-        workoutStarted: workoutStartedRef.current,
-        exerciseNames: exerciseNamesRef.current,
-      }),
-      keepalive: useKeepalive,
-    }).catch(() => {});
-  }, []);
-
-  // Save on beforeunload (desktop tab/window close)
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Flush debounced timers so the latest data is in refs
-      if (newValuesSaveTimer.current) clearTimeout(newValuesSaveTimer.current);
-      if (prevValuesSaveTimer.current) clearTimeout(prevValuesSaveTimer.current);
-
-      const currentNew = newValuesRef.current;
-      const currentPrev = previousValuesRef.current;
-
-      // Merge new values into previous for any tab that has data
-      const mergedPrevious = { ...currentPrev };
-      for (const tabId of Object.keys(currentNew)) {
-        const tabNewVals = currentNew[tabId];
-        if (tabNewVals && Object.keys(tabNewVals).length > 0) {
-          const hasData = Object.values(tabNewVals).some(ex =>
-            ex.r1 || ex.w1 || ex.r2 || ex.w2
-          );
-          if (hasData) {
-            mergedPrevious[tabId] = tabNewVals;
-          }
-        }
-      }
-
-      localStorage.setItem(getUserKeys(loggedInUser).PREVIOUS, JSON.stringify(mergedPrevious));
-      localStorage.setItem(getUserKeys(loggedInUser).NEW, JSON.stringify({}));
-      localStorage.setItem(getUserKeys(loggedInUser).NAMES, JSON.stringify(exerciseNamesRef.current));
-      localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify({}));
-
-      if (currentUser && dataLoadedRef.current) {
-        fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(currentUser)}`, {
-          method: "PUT",
-          headers: API_HEADERS,
-          body: JSON.stringify({
-            previousValues: mergedPrevious,
-            newValues: currentNew,
-            workoutStarted: workoutStartedRef.current,
-            exerciseNames: exerciseNamesRef.current,
-          }),
-          keepalive: true,
-        }).catch(() => {});
-      }
-    };
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [loggedInUser]);
-
-  // Save on visibilitychange (mobile: tab hidden, app switched, screen locked)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        flushDebouncedSaves();
-        saveAllToServer(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [flushDebouncedSaves, saveAllToServer]);
-
-  // Save on component unmount (logout)
-  useEffect(() => {
-    return () => {
-      flushDebouncedSaves();
-      saveAllToServer(true);
-    };
-  }, [flushDebouncedSaves, saveAllToServer]);
 
   const activeTab = displayTabs[activeTabIdx];
 
@@ -570,60 +366,45 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
 
   const handleStartWorkout = useCallback(() => {
     const tabId = activeTab.id;
-    // If workout was already started, save current NEW values as PREVIOUS
-    if (workoutStarted[tabId] && newValues[tabId]) {
-      setPreviousValues((prev) => {
-        const updated = { ...prev, [tabId]: { ...newValues[tabId] } };
-        saveToServer("/workout-data/previous", { previousValues: updated });
-        return updated;
-      });
-    }
-    const updatedStarted = { ...workoutStarted, [tabId]: true };
-    setWorkoutStarted(updatedStarted);
-    // Initialize empty new values
+    // Initialize empty new values for this tab
     const init: Record<string, ExerciseValues> = {};
     for (const section of activeTab.sections) {
       for (const exercise of section.exercises) {
-        init[exercise.id] = { r1: "", w1: "", r2: "", w2: "" };
+        init[exercise.id] = { ...EMPTY_VALUES };
       }
     }
-    const updatedNew = { ...newValues, [tabId]: init };
-    setNewValues(updatedNew);
+    setWorkoutStarted((prev) => ({ ...prev, [tabId]: true }));
+    setNewValues((prev) => ({ ...prev, [tabId]: init }));
     setSelectedCell(null);
-    // Persist to server (use bulk endpoint)
-    saveToServer("/workout-data", { workoutStarted: updatedStarted, newValues: updatedNew });
-  }, [activeTab, workoutStarted, newValues]);
+    // Persist to Supabase
+    startWorkoutDb(userId, tabId);
+    saveExerciseValuesBulk(userId, tabId, true, init);
+  }, [activeTab, userId]);
 
   const handleEndWorkout = useCallback(() => {
     const tabId = activeTab.id;
-    const tabNewVals = newValues[tabId];
-    // Commit NEW values into PREVIOUS (only if there's data)
-    let updatedPrevious = previousValues;
-    if (tabNewVals) {
-      const hasData = Object.values(tabNewVals).some(ex =>
-        ex.r1 || ex.w1 || ex.r2 || ex.w2
-      );
-      if (hasData) {
-        updatedPrevious = { ...previousValues, [tabId]: { ...tabNewVals } };
-        setPreviousValues(updatedPrevious);
-      }
+    const tabNewVals = newValues[tabId] ?? {};
+    const hasData = Object.values(tabNewVals).some(ex =>
+      ex.r1 || ex.w1 || ex.r2 || ex.w2
+    );
+    // Update local state
+    if (hasData) {
+      setPreviousValues((prev) => ({ ...prev, [tabId]: { ...tabNewVals } }));
     }
-    // Clear workout started state and new values for this tab
-    const updatedStarted = { ...workoutStarted, [tabId]: false };
-    setWorkoutStarted(updatedStarted);
-    const updatedNew = { ...newValues };
-    delete updatedNew[tabId];
-    setNewValues(updatedNew);
-    setSelectedCell(null);
-    // Persist to localStorage and server
-    localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify(updatedStarted));
-    localStorage.setItem(getUserKeys(loggedInUser).PREVIOUS, JSON.stringify(updatedPrevious));
-    saveToServer("/workout-data", {
-      previousValues: updatedPrevious,
-      workoutStarted: updatedStarted,
-      newValues: updatedNew,
+    setWorkoutStarted((prev) => {
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
     });
-  }, [activeTab, newValues, workoutStarted, previousValues, loggedInUser]);
+    setNewValues((prev) => {
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+    setSelectedCell(null);
+    // Persist to Supabase: copy current → previous, then clear current
+    endWorkoutDb(userId, tabId, tabNewVals);
+  }, [activeTab.id, newValues, userId]);
 
   const handleCancelWorkout = useCallback(() => {
     setShowCancelConfirm(true);
@@ -631,17 +412,21 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
 
   const handleConfirmCancel = useCallback(() => {
     const tabId = activeTab.id;
-    // Clear workout started state and new values without committing to previous
-    const updatedStarted = { ...workoutStarted, [tabId]: false };
-    setWorkoutStarted(updatedStarted);
-    const updatedNew = { ...newValues };
-    delete updatedNew[tabId];
-    setNewValues(updatedNew);
+    setWorkoutStarted((prev) => {
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+    setNewValues((prev) => {
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
     setSelectedCell(null);
     setShowCancelConfirm(false);
-    localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify(updatedStarted));
-    saveToServer("/workout-data", { workoutStarted: updatedStarted, newValues: updatedNew });
-  }, [activeTab, workoutStarted, newValues, loggedInUser]);
+    // Persist to Supabase: clear current rows + started flag
+    cancelWorkoutDb(userId, tabId);
+  }, [activeTab.id, userId]);
 
   const handleDismissCancel = useCallback(() => {
     setShowCancelConfirm(false);
@@ -797,12 +582,10 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
   const handleNameChange = useCallback((exerciseId: string, name: string) => {
     setExerciseNames((prev) => {
       const updated = { ...prev, [exerciseId]: name };
-      // Debounced save: persist to localStorage immediately, server save deferred
-      localStorage.setItem(getUserKeys(loggedInUser).NAMES, JSON.stringify(updated));
-      saveToServer("/workout-data/names", { exerciseNames: updated });
+      saveTabsRecord(userId, { exerciseNames: updated });
       return updated;
     });
-  }, [loggedInUser]);
+  }, [userId]);
 
   const handleTabChange = useCallback((idx: number) => {
     setActiveTabIdx(idx);
@@ -900,15 +683,14 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
           }
         }
         if (changed) {
-          localStorage.setItem(getUserKeys(loggedInUser).NAMES, JSON.stringify(updated));
-          saveToServer("/workout-data/names", { exerciseNames: updated });
+          saveTabsRecord(userId, { exerciseNames: updated });
         }
         return changed ? updated : en;
       });
 
       return [...prev, copy];
     });
-  }, [loggedInUser]);
+  }, [userId]);
 
   const handleReorderTabs = useCallback((from: number, to: number) => {
     if (from === to) return;
@@ -1127,10 +909,10 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     setEditingPrevious((prev) => ({ ...prev, [tabId]: false }));
     setSelectedCell(null);
     setSelectedColumn("new");
-    // Persist to localStorage and server
-    localStorage.setItem(getUserKeys(loggedInUser).PREVIOUS, JSON.stringify(previousValues));
-    saveToServer("/workout-data/previous", { previousValues });
-  }, [activeTab.id, previousValues, loggedInUser]);
+    // Persist this tab's previous values to Supabase
+    const tabPrev = previousValues[tabId] ?? {};
+    saveExerciseValuesBulk(userId, tabId, false, tabPrev);
+  }, [activeTab.id, previousValues, userId]);
 
   const tabPrevious = previousValues[activeTab.id] || {};
   const tabNew = newValues[activeTab.id] || {};
@@ -1603,8 +1385,7 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
                     newTabNames[tab.id] = draftTabNames[idx];
                   });
                   setTabNames(newTabNames);
-                  localStorage.setItem(getUserKeys(loggedInUser).TAB_NAMES, JSON.stringify(newTabNames));
-                  saveToServer("/workout-data/tab-names", { tabNames: newTabNames });
+                  saveTabsRecord(userId, { tabNames: newTabNames });
                   setShowEditTitles(false);
                   setEditingTitleIdx(null);
                 }}
