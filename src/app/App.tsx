@@ -347,7 +347,7 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     }
   }, []);
 
-  // Refs to track latest values for beforeunload
+  // Refs to track latest values for save handlers
   const newValuesRef = useRef(newValues);
   const previousValuesRef = useRef(previousValues);
   const workoutStartedRef = useRef(workoutStarted);
@@ -359,9 +359,46 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
   exerciseNamesRef.current = exerciseNames;
   dataLoadedRef.current = dataLoaded;
 
-  // Save state to localStorage on beforeunload
+  // Flush any pending debounced saves immediately
+  const flushDebouncedSaves = useCallback(() => {
+    if (!dataLoadedRef.current) return;
+    if (newValuesSaveTimer.current) {
+      clearTimeout(newValuesSaveTimer.current);
+      newValuesSaveTimer.current = null;
+      saveToServer("/workout-data", { newValues: newValuesRef.current });
+    }
+    if (prevValuesSaveTimer.current) {
+      clearTimeout(prevValuesSaveTimer.current);
+      prevValuesSaveTimer.current = null;
+      saveToServer("/workout-data/previous", { previousValues: previousValuesRef.current });
+    }
+  }, []);
+
+  // Save all current state to server (used on page hide, beforeunload, and unmount)
+  const saveAllToServer = useCallback((useKeepalive = false) => {
+    if (!currentUser || !dataLoadedRef.current) return;
+    const currentNew = newValuesRef.current;
+    const currentPrev = previousValuesRef.current;
+    fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(currentUser)}`, {
+      method: "PUT",
+      headers: API_HEADERS,
+      body: JSON.stringify({
+        previousValues: currentPrev,
+        newValues: currentNew,
+        workoutStarted: workoutStartedRef.current,
+        exerciseNames: exerciseNamesRef.current,
+      }),
+      keepalive: useKeepalive,
+    }).catch(() => {});
+  }, []);
+
+  // Save on beforeunload (desktop tab/window close)
   useEffect(() => {
     const handleBeforeUnload = () => {
+      // Flush debounced timers so the latest data is in refs
+      if (newValuesSaveTimer.current) clearTimeout(newValuesSaveTimer.current);
+      if (prevValuesSaveTimer.current) clearTimeout(prevValuesSaveTimer.current);
+
       const currentNew = newValuesRef.current;
       const currentPrev = previousValuesRef.current;
 
@@ -370,7 +407,6 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       for (const tabId of Object.keys(currentNew)) {
         const tabNewVals = currentNew[tabId];
         if (tabNewVals && Object.keys(tabNewVals).length > 0) {
-          // Only overwrite previous if the new values have actual data entered
           const hasData = Object.values(tabNewVals).some(ex =>
             ex.r1 || ex.w1 || ex.r2 || ex.w2
           );
@@ -385,8 +421,6 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
       localStorage.setItem(getUserKeys(loggedInUser).NAMES, JSON.stringify(exerciseNamesRef.current));
       localStorage.setItem(getUserKeys(loggedInUser).STARTED, JSON.stringify({}));
 
-      // Also save to server (keepalive ensures request completes on page unload)
-      // Only save if we've loaded from the server first, to avoid overwriting real data with empty defaults
       if (currentUser && dataLoadedRef.current) {
         fetch(`${API_BASE}/workout-data?user=${encodeURIComponent(currentUser)}`, {
           method: "PUT",
@@ -405,6 +439,26 @@ function WorkoutApp({ loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAp
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [loggedInUser]);
+
+  // Save on visibilitychange (mobile: tab hidden, app switched, screen locked)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushDebouncedSaves();
+        saveAllToServer(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [flushDebouncedSaves, saveAllToServer]);
+
+  // Save on component unmount (logout)
+  useEffect(() => {
+    return () => {
+      flushDebouncedSaves();
+      saveAllToServer(true);
+    };
+  }, [flushDebouncedSaves, saveAllToServer]);
 
   const activeTab = displayTabs[activeTabIdx];
 
