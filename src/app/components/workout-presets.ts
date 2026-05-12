@@ -265,6 +265,27 @@ export const workoutPresets: WorkoutPreset[] = [
   { id: "p90x-standard", name: "P90X Standard", tabs: defaultWorkoutTabs },
 ];
 
+// Builds a "from scratch" starter: 5 blank workout tabs, each with a single
+// empty exercise row. Ids are stamped at call time so they never collide.
+export function buildBlankWorkouts(): WorkoutTab[] {
+  const stamp = Date.now();
+  return Array.from({ length: 5 }, (_, i) => {
+    const tabId = `tab-blank-${stamp}-${i}`;
+    return {
+      id: tabId,
+      name: `Workout ${i + 1}`,
+      columns: 1,
+      sections: [
+        {
+          exercises: [
+            { id: `${tabId}-ex-1`, name: "New Exercise", type: "single" as const },
+          ],
+        },
+      ],
+    };
+  });
+}
+
 // Returns a deep copy of the preset's tabs with all IDs freshly minted so they
 // do not collide with the user's existing tab/exercise ids in storage.
 export function instantiatePreset(preset: WorkoutPreset): WorkoutTab[] {

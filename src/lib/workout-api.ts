@@ -200,6 +200,17 @@ export async function deleteExercisePrevious(userId: string, tabId: string, exer
   if (error) console.error("[deleteExercisePrevious] error:", error);
 }
 
+// Delete every persisted row for a single tab (values + started flag).
+// Used when a tab is removed from the UI so we don't leave orphaned rows.
+export async function deleteTabData(userId: string, tabId: string) {
+  const [valsRes, startedRes] = await Promise.all([
+    supabase.from("exercise_values").delete().eq("user_id", userId).eq("tab_id", tabId),
+    supabase.from("workout_started").delete().eq("user_id", userId).eq("tab_id", tabId),
+  ]);
+  if (valsRes.error) console.error("[deleteTabData] values error:", valsRes.error);
+  if (startedRes.error) console.error("[deleteTabData] started error:", startedRes.error);
+}
+
 // Wipe all per-tab/per-exercise state for a user (used when applying a preset).
 // Keeps the auth user but clears values, started flags, exercise/tab name overrides.
 export async function resetUserWorkoutData(userId: string) {

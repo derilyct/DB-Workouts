@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { defaultWorkoutTabs } from "./components/workout-data";
 import type { WorkoutTab } from "./components/workout-data";
-import { workoutPresets, instantiatePreset } from "./components/workout-presets";
+import { workoutPresets, instantiatePreset, buildBlankWorkouts } from "./components/workout-presets";
 import { WorkoutTable } from "./components/workout-table";
 import type { CellId, ExerciseValues } from "./components/workout-table";
 import { Numpad } from "./components/numpad";
@@ -19,6 +18,7 @@ import {
   endWorkoutDb,
   cancelWorkoutDb,
   deleteExercisePrevious,
+  deleteTabData,
   resetUserWorkoutData,
   EMPTY_VALUES,
   type ValuesMap,
@@ -127,7 +127,20 @@ interface WorkoutAppProps {
 }
 
 function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: WorkoutAppProps) {
-  const [tabs, setTabs] = useState<WorkoutTab[]>(defaultWorkoutTabs);
+  // Start with a single blank workout placeholder. Real data is loaded from
+  // Supabase below; first-time users get the same blank starter persisted.
+  // Hardcoded P90X structures are only available via the Options menu presets.
+  const [tabs, setTabs] = useState<WorkoutTab[]>(() => {
+    const id = `tab-init-${Math.random().toString(36).slice(2, 7)}`;
+    return [
+      {
+        id,
+        name: "My Workout",
+        columns: 1,
+        sections: [{ exercises: [{ id: `${id}-ex-1`, name: "New Exercise", type: "single" }] }],
+      },
+    ];
+  });
   const [activeTabIdx, setActiveTabIdx] = useState(0);
   const [workoutStarted, setWorkoutStarted] = useState<Record<string, boolean>>({});
   const [previousValues, setPreviousValues] = useState<ValuesMap>({});
@@ -202,8 +215,23 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
       if (data.tabsData && data.tabsData.length > 0) {
         setTabs(data.tabsData);
       } else {
-        // First-time user: seed their tabs structure with defaults
-        await saveTabsRecord(userId, { tabsData: defaultWorkoutTabs });
+        // First-time user: start with a single blank workout. Hardcoded
+        // structures (P90X Standard, P90X Redux) are available via the
+        // Options menu as opt-in presets.
+        const seedTabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const seedExId = `${seedTabId}-ex-1`;
+        const blankSeed: WorkoutTab[] = [
+          {
+            id: seedTabId,
+            name: "My Workout",
+            columns: 1,
+            sections: [
+              { exercises: [{ id: seedExId, name: "New Exercise", type: "single" }] },
+            ],
+          },
+        ];
+        setTabs(blankSeed);
+        await saveTabsRecord(userId, { tabsData: blankSeed });
       }
       setExerciseNames(data.exerciseNames);
       setTabNames(data.tabNames);
@@ -711,6 +739,10 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
         setTabNames((tn) => {
           const u = { ...tn }; delete u[removed.id]; return u;
         });
+        // Drop any persisted rows for this tab so they don't linger as
+        // orphans in Supabase (which previously caused stale values to
+        // resurface on reload / when ids were reused).
+        deleteTabData(userId, removed.id);
       }
       return next;
     });
@@ -719,7 +751,7 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
       if (tabIdx === idx) return Math.max(0, idx - 1);
       return idx;
     });
-  }, []);
+  }, [userId]);
 
   const handleMoveDivider = useCallback(
     (sectionIdx: number, direction: "up" | "down") => {
@@ -761,7 +793,9 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
         const tab = { ...newTabs[activeTabIdx] };
         const sections = tab.sections.map((s) => ({ ...s, exercises: [...s.exercises] }));
         const section = sections[sectionIdx];
-        const newId = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        // Tab-scoped id so it can never collide with an exercise from another
+        // tab (which previously caused values to leak between workouts).
+        const newId = `${tab.id}-ex-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newExercise = { id: newId, name: "New Exercise", type: "single" as const };
         section.exercises.splice(exerciseIdx + 1, 0, newExercise);
         tab.sections = sections;
@@ -889,12 +923,17 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
 
   const handleConfirmApplyPreset = useCallback(async () => {
     if (!pendingPresetId) return;
-    const preset = workoutPresets.find((p) => p.id === pendingPresetId);
-    if (!preset) {
-      setPendingPresetId(null);
-      return;
+    let newTabs: WorkoutTab[];
+    if (pendingPresetId === "my-workout") {
+      newTabs = buildBlankWorkouts();
+    } else {
+      const preset = workoutPresets.find((p) => p.id === pendingPresetId);
+      if (!preset) {
+        setPendingPresetId(null);
+        return;
+      }
+      newTabs = instantiatePreset(preset);
     }
-    const newTabs = instantiatePreset(preset);
     // Reset local state first so debounced effects don't try to persist stale data
     tabsInitialSkip.current = true;
     newValuesInitialSkip.current = true;
@@ -1049,6 +1088,35 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
                       : "bg-white border-gray-200"
                   }`}
                 >
+                  {/* MY WORKOUT — start completely fresh */}
+                  <div className="flex flex-col gap-1">
+                    <p
+                      className={`font-['Inter',sans-serif] text-[8px] tracking-wider px-2 ${darkMode ? "text-white" : "text-black"}`}
+                      style={{ fontWeight: 700 }}
+                    >
+                      MY WORKOUTS
+                    </p>
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setShowOptionsMenu(false);
+                        setPendingPresetId("my-workout");
+                      }}
+                      className={`flex items-center gap-2.5 p-2 cursor-pointer transition-colors text-left font-['Inter',sans-serif] text-[12px] ${
+                        darkMode
+                          ? "text-white hover:bg-[#2a2a3a]"
+                          : "text-black hover:bg-gray-100"
+                      }`}
+                      style={{ fontWeight: 400 }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                      </svg>
+                      <span>My Workout</span>
+                    </button>
+                  </div>
+                  <div className={`h-px w-full ${darkMode ? "bg-[#3a3a4a]" : "bg-[#f0f0f0]"}`} />
                   {/* WORKOUT PRESETS */}
                   <div className="flex flex-col gap-1">
                     <p
@@ -1323,10 +1391,12 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
                 Replace your current workouts with the
                 {" "}
                 <span className="text-[#008ede]">
-                  {workoutPresets.find((p) => p.id === pendingPresetId)?.name}
+                  {pendingPresetId === "my-workout"
+                    ? "My Workout"
+                    : workoutPresets.find((p) => p.id === pendingPresetId)?.name}
                 </span>
                 {" "}
-                preset?
+                {pendingPresetId === "my-workout" ? "starter" : "preset"}?
               </p>
               <p className={`mt-2 font-['Inter',sans-serif] text-[12px] sm:text-[14px] ${darkMode ? "text-[#a0a0b0]" : "text-[#666]"}`} style={{ fontWeight: 400 }}>
                 All existing tabs, exercises, and workout data will be cleared.
