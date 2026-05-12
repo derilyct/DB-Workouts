@@ -3,7 +3,57 @@ import { createPortal } from "react-dom";
 import type { ExerciseType, WorkoutSection } from "./workout-data";
 import svgPaths from "../../imports/svg-8ibnzagso3";
 import eraserSvgPaths from "../../imports/svg-rmxktoe2sw";
-import numberSvgPaths from "../../imports/svg-3jht15e4am";
+
+// Small inline icon: a numeric "1" or "2" inside a circle (used for tab column count)
+function NumberCircleIcon({ n, darkMode }: { n: 1 | 2; darkMode?: boolean }) {
+  const fg = darkMode ? "#ffffff" : "#242424";
+  return (
+    <div
+      className="flex items-center justify-center shrink-0"
+      style={{
+        width: 20,
+        height: 20,
+      }}
+    >
+      <div
+        className="flex items-center justify-center"
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9999,
+          border: `1.5px solid ${fg}`,
+          color: fg,
+          fontFamily: "Inter, sans-serif",
+          fontWeight: 700,
+          fontSize: 11,
+          lineHeight: 1,
+        }}
+      >
+        {n}
+      </div>
+    </div>
+  );
+}
+
+// Small inline icon: text-box style icon. "single" = one line, "double" = two lines
+function DataEntryIcon({ mode, darkMode }: { mode: "single" | "double"; darkMode?: boolean }) {
+  const fg = darkMode ? "#ffffff" : "#242424";
+  return (
+    <div className="relative size-[20px] shrink-0">
+      <svg className="block size-full" viewBox="0 0 20 20" fill="none">
+        <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" stroke={fg} strokeWidth="1.4" />
+        {mode === "single" ? (
+          <line x1="5" y1="10" x2="15" y2="10" stroke={fg} strokeWidth="1.4" strokeLinecap="round" />
+        ) : (
+          <>
+            <line x1="5" y1="8" x2="15" y2="8" stroke={fg} strokeWidth="1.4" strokeLinecap="round" />
+            <line x1="5" y1="12" x2="15" y2="12" stroke={fg} strokeWidth="1.4" strokeLinecap="round" />
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
 
 // Cell identifier: exerciseId + "r" or "w" for reps/weight field, plus set number (1 or 2)
 export interface CellId {
@@ -44,6 +94,8 @@ interface WorkoutTableProps {
   onRemoveDivider?: (sectionIdx: number) => void;
   onSetExerciseType?: (sectionIdx: number, exerciseIdx: number, type: ExerciseType) => void;
   onSetDividerNav?: (sectionIdx: number, mode: "wrap" | "down") => void;
+  tabColumns?: 1 | 2;
+  onSetTabColumns?: (columns: 1 | 2) => void;
 }
 
 function HorizontalDivider({
@@ -300,6 +352,8 @@ function OptionsButton({
   onRemoveDivider,
   onSetExerciseType,
   hasDividerBelow,
+  tabColumns,
+  onSetTabColumns,
 }: {
   sectionIdx: number;
   exerciseIdx: number;
@@ -311,6 +365,8 @@ function OptionsButton({
   onRemoveDivider?: (sectionIdx: number) => void;
   onSetExerciseType?: (sectionIdx: number, exerciseIdx: number, type: ExerciseType) => void;
   hasDividerBelow: boolean;
+  tabColumns?: 1 | 2;
+  onSetTabColumns?: (columns: 1 | 2) => void;
 }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -375,60 +431,63 @@ function OptionsButton({
             transform: "translateY(-50%)",
           }}
         >
-          <div className="flex flex-col gap-[8px] items-start">
+          <div className="flex flex-col gap-[4px] items-stretch min-w-[140px]">
             {/* Add Row */}
             <button
               onClick={() => { onAddExercise(sectionIdx, exerciseIdx); setOpen(false); }}
-              className={`flex items-center p-[8px] cursor-pointer transition-colors ${
+              className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
                 darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
               }`}
               title="Add row"
             >
-              <div className="relative size-[20px]" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
+              <div className="relative size-[20px] shrink-0" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
                 <div className="-translate-x-1/2 -translate-y-1/2 absolute left-1/2 size-[15px] top-1/2">
                   <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 15 15">
                     <path d={svgPaths.p38be5300} fill="var(--fill-0, #242424)" />
                   </svg>
                 </div>
               </div>
+              <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Add Row</span>
             </button>
             {/* Remove Row */}
             <button
               onClick={() => { onRemoveExercise(sectionIdx, exerciseIdx); setOpen(false); }}
-              className={`flex items-center p-[8px] cursor-pointer transition-colors ${
+              className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
                 darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
               }`}
               title="Remove row"
             >
-              <div className="relative size-[20px]" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
+              <div className="relative size-[20px] shrink-0" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
                 <div className="-translate-x-1/2 -translate-y-1/2 absolute left-1/2 size-[12px] top-1/2">
                   <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 12 12">
                     <path d={svgPaths.p301c8b00} fill="var(--fill-0, #242424)" />
                   </svg>
                 </div>
               </div>
+              <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Delete Row</span>
             </button>
             {/* Add Divider */}
             <button
               onClick={() => { onAddDivider(sectionIdx, exerciseIdx); setOpen(false); }}
-              className={`flex items-center p-[8px] cursor-pointer transition-colors ${
+              className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
                 darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
               }`}
               title="Add divider below"
             >
-              <div className="relative size-[20px]" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
+              <div className="relative size-[20px] shrink-0" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
                 <div className="-translate-x-1/2 -translate-y-1/2 absolute h-[16px] left-1/2 top-1/2 w-[15px]">
                   <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 15 16.0002">
                     <path d={svgPaths.p15067e80} fill="var(--fill-0, #242424)" />
                   </svg>
                 </div>
               </div>
+              <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Add Divider</span>
             </button>
             {/* Remove Divider */}
             {hasDividerBelow && onRemoveDivider && (
               <button
                 onClick={() => { onRemoveDivider(sectionIdx); setOpen(false); }}
-                className={`flex items-center p-[8px] cursor-pointer transition-colors ${
+                className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
                   darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
                 }`}
                 title="Remove divider"
@@ -440,46 +499,64 @@ function OptionsButton({
                     </svg>
                   </div>
                 </div>
+                <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Remove Divider</span>
               </button>
             )}
-            {/* Set Exercise Type */}
+            {/* Tab column count: 1 / 2 columns */}
+            {onSetTabColumns && (
+              <>
+                <button
+                  onClick={() => { onSetTabColumns(1); setOpen(false); }}
+                  className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
+                    tabColumns === 1 ? (darkMode ? "bg-[#4a4a5a]" : "bg-gray-200") : ""
+                  } ${
+                    darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
+                  }`}
+                  title="Single column layout"
+                >
+                  <NumberCircleIcon n={1} darkMode={darkMode} />
+                  <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Column</span>
+                </button>
+                <button
+                  onClick={() => { onSetTabColumns(2); setOpen(false); }}
+                  className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
+                    tabColumns === 2 ? (darkMode ? "bg-[#4a4a5a]" : "bg-gray-200") : ""
+                  } ${
+                    darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
+                  }`}
+                  title="Two column layout"
+                >
+                  <NumberCircleIcon n={2} darkMode={darkMode} />
+                  <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Columns</span>
+                </button>
+              </>
+            )}
+            {/* Set Exercise Type: single / double data entry */}
             {onSetExerciseType && (
               <>
-                {/* Set to Single (R only) */}
                 <button
                   onClick={() => { onSetExerciseType(sectionIdx, exerciseIdx, "single"); setOpen(false); }}
-                  className={`flex items-center p-[8px] cursor-pointer transition-colors ${
+                  className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
                     exerciseType === "single" ? (darkMode ? "bg-[#4a4a5a]" : "bg-gray-200") : ""
                   } ${
                     darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
                   }`}
-                  title="Single input (R only)"
+                  title="Single data entry (R only)"
                 >
-                  <div className="relative size-[20px]" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
-                    <div className="-translate-x-1/2 -translate-y-1/2 absolute left-1/2 size-[16px] top-1/2">
-                      <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 16 16">
-                        <path d={numberSvgPaths.p31e95100} fill="var(--fill-0, #242424)" />
-                      </svg>
-                    </div>
-                  </div>
+                  <DataEntryIcon mode="single" darkMode={darkMode} />
+                  <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Single Entry</span>
                 </button>
-                {/* Set to Double (R/W) */}
                 <button
                   onClick={() => { onSetExerciseType(sectionIdx, exerciseIdx, "double"); setOpen(false); }}
-                  className={`flex items-center p-[8px] cursor-pointer transition-colors ${
+                  className={`flex items-center gap-[10px] px-[8px] py-[8px] cursor-pointer transition-colors text-left ${
                     exerciseType === "double" ? (darkMode ? "bg-[#4a4a5a]" : "bg-gray-200") : ""
                   } ${
                     darkMode ? "hover:bg-[#3a3a4a]" : "hover:bg-gray-100"
                   }`}
-                  title="Dual input (R/W)"
+                  title="Double data entry (R/W)"
                 >
-                  <div className="relative size-[20px]" style={{ "--fill-0": darkMode ? "#ffffff" : "#242424" } as React.CSSProperties}>
-                    <div className="-translate-x-1/2 -translate-y-1/2 absolute left-1/2 size-[16px] top-1/2">
-                      <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 16 16">
-                        <path d={numberSvgPaths.pfbecb80} fill="var(--fill-0, #242424)" />
-                      </svg>
-                    </div>
-                  </div>
+                  <DataEntryIcon mode="double" darkMode={darkMode} />
+                  <span className={`font-['Inter',sans-serif] text-[12px] leading-[15px] ${darkMode ? "text-white" : "text-[#242424]"}`}>Double Entry</span>
                 </button>
               </>
             )}
@@ -618,6 +695,8 @@ export function WorkoutTable({
   onRemoveDivider,
   onSetExerciseType,
   onSetDividerNav,
+  tabColumns,
+  onSetTabColumns,
 }: WorkoutTableProps) {
   const [editingName, setEditingName] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1054,6 +1133,8 @@ export function WorkoutTable({
                   onRemoveDivider={onRemoveDivider}
                   onSetExerciseType={onSetExerciseType}
                   hasDividerBelow={eIdx === section.exercises.length - 1 && sIdx < sections.length - 1}
+                  tabColumns={tabColumns}
+                  onSetTabColumns={onSetTabColumns}
                 />
               ))}
               {sIdx < sections.length - 1 && onSetDividerNav ? (

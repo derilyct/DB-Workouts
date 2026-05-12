@@ -1167,6 +1167,8 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
               onRemoveDivider={handleRemoveDivider}
               onSetExerciseType={handleSetExerciseType}
               onSetDividerNav={handleSetDividerNav}
+              tabColumns={activeColumns}
+              onSetTabColumns={(n) => handleSetTabColumns(activeTabIdx, n)}
             />
           </div>
 
