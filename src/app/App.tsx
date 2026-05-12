@@ -287,34 +287,18 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
       }
     };
 
-    // Walk col 1 of each section. After the section, if its divider is "wrap"
-    // (or it's the last section), wrap up to col 2 of THAT section before
-    // moving to the next section's col 1. "down" dividers skip col 2 entirely;
-    // those col-2 cells are appended at the end so they remain reachable.
+    // Walk col 1 of each section. For two-column tabs, always wrap up to col 2
+    // of the same section before moving on to the next section's col 1.
     const sections = activeTab.sections;
-    const deferredCol2: { exerciseId: string; type: "single" | "double" }[][] = [];
     for (let i = 0; i < sections.length; i++) {
       const section = sections[i];
       for (const e of section.exercises) {
         pushExerciseCells({ exerciseId: e.id, type: e.type }, 1);
       }
-      const isLast = i === sections.length - 1;
-      const navMode = section.nextDividerNav || "down";
       if (!isSingleNewColumn) {
-        if (isLast || navMode === "wrap") {
-          for (const e of section.exercises) {
-            pushExerciseCells({ exerciseId: e.id, type: e.type }, 2);
-          }
-        } else {
-          deferredCol2.push(section.exercises.map(e => ({ exerciseId: e.id, type: e.type })));
+        for (const e of section.exercises) {
+          pushExerciseCells({ exerciseId: e.id, type: e.type }, 2);
         }
-      }
-    }
-    // Append any col-2 sections that were skipped due to "down" dividers so users
-    // can still reach those cells via tab navigation.
-    for (const sectionExercises of deferredCol2) {
-      for (const ex of sectionExercises) {
-        pushExerciseCells(ex, 2);
       }
     }
 
