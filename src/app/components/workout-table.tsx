@@ -1140,7 +1140,7 @@ export function WorkoutTable({
               {sIdx < sections.length - 1 && onSetDividerNav ? (
                 <DividerOptionsButton
                   sectionIdx={sIdx}
-                  navMode={section.nextDividerNav || "wrap"}
+                  navMode={section.nextDividerNav || "down"}
                   darkMode={darkMode}
                   onSetDividerNav={onSetDividerNav}
                 />
