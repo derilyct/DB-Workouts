@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { defaultWorkoutTabs } from "./components/workout-data";
 import type { WorkoutTab } from "./components/workout-data";
+import { workoutPresets, instantiatePreset } from "./components/workout-presets";
 import { WorkoutTable } from "./components/workout-table";
 import type { CellId, ExerciseValues } from "./components/workout-table";
 import { Numpad } from "./components/numpad";
@@ -18,6 +19,7 @@ import {
   endWorkoutDb,
   cancelWorkoutDb,
   deleteExercisePrevious,
+  resetUserWorkoutData,
   EMPTY_VALUES,
   type ValuesMap,
 } from "../lib/workout-api";
@@ -146,6 +148,9 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
   const tabDropdownRef = useRef<HTMLDivElement>(null);
   const [tabNames, setTabNames] = useState<Record<string, string>>({});
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const optionsMenuRef = useRef<HTMLDivElement>(null);
+  const [pendingPresetId, setPendingPresetId] = useState<string | null>(null);
 
   // Apply persisted tab names to tabs
   const displayTabs = useMemo(() => {
@@ -175,6 +180,18 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showTabDropdown]);
+
+  // Close options menu when clicking outside
+  useEffect(() => {
+    if (!showOptionsMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (optionsMenuRef.current && !optionsMenuRef.current.contains(e.target as Node)) {
+        setShowOptionsMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showOptionsMenu]);
 
   // Load all data from Supabase on mount
   useEffect(() => {
@@ -870,6 +887,34 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
     });
   }, [setDarkMode]);
 
+  const handleConfirmApplyPreset = useCallback(async () => {
+    if (!pendingPresetId) return;
+    const preset = workoutPresets.find((p) => p.id === pendingPresetId);
+    if (!preset) {
+      setPendingPresetId(null);
+      return;
+    }
+    const newTabs = instantiatePreset(preset);
+    // Reset local state first so debounced effects don't try to persist stale data
+    tabsInitialSkip.current = true;
+    newValuesInitialSkip.current = true;
+    prevValuesInitialSkip.current = true;
+    setTabs(newTabs);
+    setActiveTabIdx(0);
+    setExerciseNames({});
+    setTabNames({});
+    setPreviousValues({});
+    setNewValues({});
+    setWorkoutStarted({});
+    setEditingPrevious({});
+    setSelectedCell(null);
+    setSelectedColumn("new");
+    setPendingPresetId(null);
+    // Persist: wipe everything for this user, then save the new tab structure
+    await resetUserWorkoutData(userId);
+    await saveTabsRecord(userId, { tabsData: newTabs, exerciseNames: {}, tabNames: {} });
+  }, [pendingPresetId, userId]);
+
   const handleSavePrevious = useCallback(() => {
     const tabId = activeTab.id;
     setEditingPrevious((prev) => ({ ...prev, [tabId]: false }));
@@ -973,74 +1018,160 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
             )}
           </div>
 
-          {/* Edit titles, Dark mode toggle + Fullscreen - right */}
+          {/* Options dropdown + Fullscreen - right */}
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Logged in user indicator + logout */}
-            <button
-              onClick={onLogout}
-              className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 cursor-pointer transition-colors font-['Inter',sans-serif] text-[11px] sm:text-[12px] shrink-0 ${
-                darkMode
-                  ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
-                  : "bg-white/80 text-black hover:bg-white"
-              }`}
-              style={{ fontWeight: 600 }}
-              title={`Signed in as ${loggedInUser}. Click to sign out.`}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[14px] h-[14px] sm:w-[16px] sm:h-[16px]">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                <polyline points="16 17 21 12 16 7" />
-                <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-              <span className="hidden sm:inline">Sign out</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setDraftTabNames(displayTabs.map((t) => t.name));
-                setEditingTitleIdx(null);
-                setShowEditTitles(true);
-              }}
-              className={`flex items-center justify-center p-1.5 sm:p-2 cursor-pointer transition-colors shrink-0 ${
-                darkMode
-                  ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
-                  : "bg-white/80 text-black hover:bg-white"
-              }`}
-              title="Edit workout titles"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[14px] h-[14px] sm:w-[16px] sm:h-[16px]">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-            </button>
-
-            <button
-              onClick={toggleDarkMode}
-              className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 cursor-pointer transition-colors font-['Inter',sans-serif] text-[11px] sm:text-[12px] shrink-0 ${
-                darkMode
-                  ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
-                  : "bg-white/80 text-black hover:bg-white"
-              }`}
-              style={{ fontWeight: 600 }}
-            >
-              {darkMode ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[14px] h-[14px] sm:w-[16px] sm:h-[16px]">
-                  <circle cx="12" cy="12" r="5" />
-                  <line x1="12" y1="1" x2="12" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="23" />
-                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                  <line x1="1" y1="12" x2="3" y2="12" />
-                  <line x1="21" y1="12" x2="23" y2="12" />
-                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            <div className="relative" ref={optionsMenuRef}>
+              <button
+                onClick={() => setShowOptionsMenu((prev) => !prev)}
+                className={`flex items-center justify-center p-1.5 sm:p-2 cursor-pointer transition-colors shrink-0 ${
+                  darkMode
+                    ? "bg-[#2a2a3a] text-white hover:bg-[#3a3a4a]"
+                    : "bg-white/80 text-black hover:bg-white"
+                }`}
+                title="Options"
+                aria-haspopup="menu"
+                aria-expanded={showOptionsMenu}
+              >
+                {/* Fluent "Options" / sliders icon */}
+                <svg width="16" height="14" viewBox="0 0 16 14" fill="none" className="w-[14px] h-[12px] sm:w-[16px] sm:h-[14px]">
+                  <path
+                    d="M2.5 1.5h6.05a2.5 2.5 0 0 1 4.9 0H13.5a.5.5 0 0 1 0 1h-.05a2.5 2.5 0 0 1-4.9 0H2.5a.5.5 0 0 1 0-1Zm8.5 1.75A1.25 1.25 0 1 0 11 .75a1.25 1.25 0 0 0 0 2.5ZM2.5 6.5h.05a2.5 2.5 0 0 1 4.9 0H13.5a.5.5 0 0 1 0 1H7.45a2.5 2.5 0 0 1-4.9 0H2.5a.5.5 0 0 1 0-1ZM5 8.25A1.25 1.25 0 1 0 5 5.75a1.25 1.25 0 0 0 0 2.5ZM2.5 11.5h6.05a2.5 2.5 0 0 1 4.9 0H13.5a.5.5 0 0 1 0 1h-.05a2.5 2.5 0 0 1-4.9 0H2.5a.5.5 0 0 1 0-1Zm8.5 1.75a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Z"
+                    fill="currentColor"
+                  />
                 </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[14px] h-[14px] sm:w-[16px] sm:h-[16px]">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
+              </button>
+              {showOptionsMenu && (
+                <div
+                  role="menu"
+                  className={`absolute right-0 top-full mt-1 min-w-[200px] z-50 shadow-lg border flex flex-col gap-4 p-4 ${
+                    darkMode
+                      ? "bg-[#1e1e2e] border-[#3a3a4a]"
+                      : "bg-white border-gray-200"
+                  }`}
+                >
+                  {/* WORKOUT PRESETS */}
+                  <div className="flex flex-col gap-1">
+                    <p
+                      className={`font-['Inter',sans-serif] text-[8px] tracking-wider px-2 ${darkMode ? "text-white" : "text-black"}`}
+                      style={{ fontWeight: 700 }}
+                    >
+                      WORKOUT PRESETS
+                    </p>
+                    {workoutPresets.map((preset) => (
+                      <button
+                        key={preset.id}
+                        role="menuitem"
+                        onClick={() => {
+                          setShowOptionsMenu(false);
+                          setPendingPresetId(preset.id);
+                        }}
+                        className={`flex items-center gap-2.5 p-2 cursor-pointer transition-colors text-left font-['Inter',sans-serif] text-[12px] ${
+                          darkMode
+                            ? "text-white hover:bg-[#2a2a3a]"
+                            : "text-black hover:bg-gray-100"
+                        }`}
+                        style={{ fontWeight: 400 }}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                          <line x1="3.5" y1="7" x2="16.5" y2="7" />
+                          <line x1="3.5" y1="13" x2="16.5" y2="13" />
+                          <line x1="7.5" y1="3" x2="6" y2="17" />
+                          <line x1="14" y1="3" x2="12.5" y2="17" />
+                        </svg>
+                        <span>{preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className={`h-px w-full ${darkMode ? "bg-[#3a3a4a]" : "bg-[#f0f0f0]"}`} />
+                  {/* OPTIONS */}
+                  <div className="flex flex-col gap-1">
+                    <p
+                      className={`font-['Inter',sans-serif] text-[8px] tracking-wider px-2 ${darkMode ? "text-white" : "text-black"}`}
+                      style={{ fontWeight: 700 }}
+                    >
+                      OPTIONS
+                    </p>
+                    {/* Dark / Light Mode toggle (icon + label switches based on current state) */}
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        toggleDarkMode();
+                        setShowOptionsMenu(false);
+                      }}
+                      className={`flex items-center gap-2.5 p-2 cursor-pointer transition-colors text-left font-['Inter',sans-serif] text-[12px] ${
+                        darkMode
+                          ? "text-white hover:bg-[#2a2a3a]"
+                          : "text-black hover:bg-gray-100"
+                      }`}
+                      style={{ fontWeight: 400 }}
+                    >
+                      {darkMode ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                          <circle cx="12" cy="12" r="5" />
+                          <line x1="12" y1="1" x2="12" y2="3" />
+                          <line x1="12" y1="21" x2="12" y2="23" />
+                          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                          <line x1="1" y1="12" x2="3" y2="12" />
+                          <line x1="21" y1="12" x2="23" y2="12" />
+                          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                      ) : (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                        </svg>
+                      )}
+                      <span>{darkMode ? "Light Mode" : "Dark Mode"}</span>
+                    </button>
+
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setDraftTabNames(displayTabs.map((t) => t.name));
+                        setEditingTitleIdx(null);
+                        setShowEditTitles(true);
+                        setShowOptionsMenu(false);
+                      }}
+                      className={`flex items-center gap-2.5 p-2 cursor-pointer transition-colors text-left font-['Inter',sans-serif] text-[12px] ${
+                        darkMode
+                          ? "text-white hover:bg-[#2a2a3a]"
+                          : "text-black hover:bg-gray-100"
+                      }`}
+                      style={{ fontWeight: 400 }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                      <span>Edit Workout List</span>
+                    </button>
+
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setShowOptionsMenu(false);
+                        onLogout();
+                      }}
+                      className={`flex items-center gap-2.5 p-2 cursor-pointer transition-colors text-left font-['Inter',sans-serif] text-[12px] ${
+                        darkMode
+                          ? "text-white hover:bg-[#2a2a3a]"
+                          : "text-black hover:bg-gray-100"
+                      }`}
+                      style={{ fontWeight: 400 }}
+                      title={`Signed in as ${loggedInUser}`}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                      </svg>
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                </div>
               )}
-              <span className="hidden sm:inline">{darkMode ? "Light" : "Dark"}</span>
-            </button>
+            </div>
 
             <button
               onClick={toggleFullscreen}
@@ -1175,6 +1306,46 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
                 style={{ fontWeight: 700 }}
               >
                 Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply preset confirmation */}
+      {pendingPresetId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`flex flex-col gap-5 sm:gap-[34px] items-center justify-center p-5 sm:p-[32px] shadow-[0px_2px_20px_0px_rgba(0,0,0,0.25)] max-w-[90vw] ${
+            darkMode ? "bg-[#1e1e2e]" : "bg-white"
+          }`}>
+            <div className={`font-['Inter',sans-serif] text-[14px] sm:text-[18px] lg:text-[20px] text-center ${darkMode ? "text-white" : "text-black"}`} style={{ fontWeight: 700 }}>
+              <p>
+                Replace your current workouts with the
+                {" "}
+                <span className="text-[#008ede]">
+                  {workoutPresets.find((p) => p.id === pendingPresetId)?.name}
+                </span>
+                {" "}
+                preset?
+              </p>
+              <p className={`mt-2 font-['Inter',sans-serif] text-[12px] sm:text-[14px] ${darkMode ? "text-[#a0a0b0]" : "text-[#666]"}`} style={{ fontWeight: 400 }}>
+                All existing tabs, exercises, and workout data will be cleared.
+              </p>
+            </div>
+            <div className="flex gap-6 sm:gap-[34px] items-center justify-center">
+              <button
+                onClick={() => setPendingPresetId(null)}
+                className={`font-['Inter',sans-serif] text-[16px] sm:text-[20px] cursor-pointer bg-transparent border-none hover:opacity-70 transition-opacity ${darkMode ? "text-white" : "text-black"}`}
+                style={{ fontWeight: 700 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmApplyPreset}
+                className="bg-[#008ede] px-[16px] py-[8px] font-['Inter',sans-serif] text-[16px] sm:text-[20px] text-white cursor-pointer border-none hover:bg-[#007acc] active:bg-[#006bb3] transition-colors"
+                style={{ fontWeight: 700 }}
+              >
+                Apply
               </button>
             </div>
           </div>

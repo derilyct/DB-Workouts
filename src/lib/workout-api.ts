@@ -200,5 +200,29 @@ export async function deleteExercisePrevious(userId: string, tabId: string, exer
   if (error) console.error("[deleteExercisePrevious] error:", error);
 }
 
+// Wipe all per-tab/per-exercise state for a user (used when applying a preset).
+// Keeps the auth user but clears values, started flags, exercise/tab name overrides.
+export async function resetUserWorkoutData(userId: string) {
+  const [valsRes, startedRes, tabsRes] = await Promise.all([
+    supabase.from("exercise_values").delete().eq("user_id", userId),
+    supabase.from("workout_started").delete().eq("user_id", userId),
+    supabase
+      .from("workout_tabs")
+      .upsert(
+        {
+          user_id: userId,
+          tabs_data: null,
+          exercise_names: {},
+          tab_names: {},
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      ),
+  ]);
+  if (valsRes.error) console.error("[resetUserWorkoutData] values error:", valsRes.error);
+  if (startedRes.error) console.error("[resetUserWorkoutData] started error:", startedRes.error);
+  if (tabsRes.error) console.error("[resetUserWorkoutData] tabs error:", tabsRes.error);
+}
+
 // Re-export for convenience
 export { EMPTY_VALUES };
