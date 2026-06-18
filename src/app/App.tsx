@@ -332,18 +332,38 @@ function WorkoutApp({ userId, loggedInUser, darkMode, setDarkMode, onLogout }: W
       }
     };
 
-    // Walk col 1 of each section. For two-column tabs, always wrap up to col 2
-    // of the same section before moving on to the next section's col 1.
     const sections = activeTab.sections;
+
+    // Single-column tabs only ever walk col 1 straight through every section.
+    if (isSingleNewColumn) {
+      for (const section of sections) {
+        for (const e of section.exercises) {
+          pushExerciseCells({ exerciseId: e.id, type: e.type }, 1);
+        }
+      }
+      return cells;
+    }
+
+    // Two-column tabs: at each line break (section divider) the section's
+    // `nextDividerNav` decides what happens after finishing col 1.
+    //  - "wrap": go up to col 2 (fill set 2 for the accumulated group, then continue)
+    //  - "down": keep going down col 1 into the next section, deferring col 2
+    // Sections joined by "down" dividers form a group whose col 2 is filled
+    // together once a "wrap" divider (or the last section) is reached.
+    let group: { exerciseId: string; type: "single" | "double" }[] = [];
     for (let i = 0; i < sections.length; i++) {
       const section = sections[i];
       for (const e of section.exercises) {
         pushExerciseCells({ exerciseId: e.id, type: e.type }, 1);
+        group.push({ exerciseId: e.id, type: e.type });
       }
-      if (!isSingleNewColumn) {
-        for (const e of section.exercises) {
-          pushExerciseCells({ exerciseId: e.id, type: e.type }, 2);
+      const isLast = i === sections.length - 1;
+      const nav = section.nextDividerNav || "down";
+      if (nav === "wrap" || isLast) {
+        for (const e of group) {
+          pushExerciseCells(e, 2);
         }
+        group = [];
       }
     }
 
